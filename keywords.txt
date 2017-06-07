@@ -13,22 +13,19 @@ RotaryEncoder	KEYWORD1
 #######################################
 
 attach			KEYWORD2
-activeHigh		KEYWORD2
-activeLow		KEYWORD2
+idlesHigh		KEYWORD2
+idlesLow		KEYWORD2
 debounceTime	KEYWORD2
-doubleTapTime	KEYWORD2
-holdTime		KEYWORD2
-interval		KEYWORD2
 update			KEYWORD2
+direction		KEYWORD2
+increased		KEYWORD2
+decreased		KEYWORD2
+positionMin		KEYWORD2
+positionMax		KEYWORD2
+setPosition		KEYWORD2
+getPosition		KEYWORD2
 reset			KEYWORD2
 retime			KEYWORD2
-event			KEYWORD2
-tapped			KEYWORD2
-doubleTapped	KEYWORD2
-held			KEYWORD2
-read			KEYWORD2
-rose			KEYWORD2
-fell			KEYWORD2
 
 #######################################
 # Instances (KEYWORD2)
@@ -37,11 +34,3 @@ fell			KEYWORD2
 #######################################
 # Constants (LITERAL1)
 #######################################
-
-idle			LITERAL1
-pressed			LITERAL1
-released		LITERAL1
-none			LITERAL1
-tap				LITERAL1
-doubleTap		LITERAL1
-hold			LITERAL1

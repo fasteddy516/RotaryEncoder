@@ -1,179 +1,127 @@
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * *
-Written by Edward Wright (fasteddy@thewrightspace.net)
-Utilizes the Bounce2 library (https://github.com/thomasfredericks/Bounce2) by Thomas O Fredericks (tof@t-o-f.info)
+Library written by Edward Wright (fasteddy@thewrightspace.net)
+The encoder reading logic in the update() method is based on example code
+written by Oleg Mazurov, available at the time this was written at:
+https://www.circuitsathome.com/mcu/reading-rotary-encoder-on-arduino/
 * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 #include "Arduino.h"
-#include "ButtonEvents.h"
+#include "RotaryEncoder.h"
 
 // default (and only) constructor
-ButtonEvents::ButtonEvents() {
-  debouncedButton.interval(DEFAULT_DEBOUNCE_MS);
-  doubleTapTime_ms = DEFAULT_DOUBLETAP_MS;
-  holdTime_ms = DEFAULT_HOLD_MS;
-  isActiveLow = DEFAULT_ACTIVE_LOW;
-  eventTime_ms = 0; // initialize button timestamps and states...
-  buttonState = idle;
-  buttonEvent = none;
+RotaryEncoder::RotaryEncoder() {
+  idlesHigh();
+  debounceTime_ms = DEFAULT_DEBOUNCE_MS;
+  reset();  
 }
 
-// passthru to Bounce2 attach() method
-void ButtonEvents::attach(int pin) {
-  debouncedButton.attach(pin);
+// assigns the specified pins as encoder channel a/b inputs
+void RotaryEncoder::attach(byte encoderChannelAPin, byte encoderChannelBPin) {
+  channelAPin = encoderChannelAPin;
+  channelBPin = encoderChannelBPin;
 }
 
-// passthru to Bounce2 attach() overload
-void ButtonEvents::attach(int pin, int mode) {
-  debouncedButton.attach(pin, mode);
+// indicates that channel a/b input signals are high when encoder is not moving
+void RotaryEncoder::idlesHigh() {
+  initialState = INITIALSTATE_HIGHIDLE;
 }
 
-// set button mode to active high
-void ButtonEvents::activeHigh() {
-  isActiveLow = false;
+// indicates that channel a/b input signals are low when encoder is not moving
+void RotaryEncoder::idlesLow() {
+  initialState = INITIALSTATE_LOWIDLE;
 }
 
-// set button mode to active low
-void ButtonEvents::activeLow() {
-  isActiveLow = true;
+// sets the debounce (rate limiter) duration used for reading the encoder
+void RotaryEncoder::debounceTime(unsigned int debounce_ms) {
+  debounceTime_ms = debounce_ms;
 }
 
-// alias/passthru to Bounce2 interval() method
-void ButtonEvents::debounceTime(unsigned int debounce_ms) {
-  debouncedButton.interval(debounce_ms);
-}
-
-// method to set the 'doubleTap' event detection window
-void ButtonEvents::doubleTapTime(unsigned int doubleTap_ms) {
-  doubleTapTime_ms = doubleTap_ms;
-}
-
-// method to set the amount of time that must elapse to trigger a 'hold' event
-void ButtonEvents::holdTime(unsigned int hold_ms) {
-  holdTime_ms = hold_ms;
-}
-
-// passthru to Bounce2 interval() method
-void ButtonEvents::interval(unsigned int interval_ms) {
-  debouncedButton.interval(interval_ms);
-}
-
-// returns true if button was pressed (accounts for active high/low)
-bool ButtonEvents::buttonPressed() {
-  if (isActiveLow && debouncedButton.fell()) return true;
-  else if (!isActiveLow && debouncedButton.rose()) return true;
-  return false;
-}
-
-// returns true if button was released (accounts for active high/low)
-bool ButtonEvents::buttonReleased() {
-  if (isActiveLow && debouncedButton.rose()) return true;
-  else if (!isActiveLow && debouncedButton.fell()) return true;
-  return false;
-}
-
-// calls the Bounce2 update() method, then runs button event detection logic
-bool ButtonEvents::update() {
-  bool passthruState = debouncedButton.update(); // update debounced button state
-
-  if (buttonPressed()) {
-    // if the button was previously idle, store the press time and update the button state
-    if (buttonState == idle) {
-      eventTime_ms = millis();
-      buttonState = pressed;
-    }
-
-    // if the button was in a released state (waiting for a double tap), update the button
-    // state and indicate that a double tap event occurred
-    else if (buttonState == released) {
-      buttonState = idle;
-      buttonEvent = doubleTap;
-      return true;
-    }
-  }
-
-  else if (buttonReleased()) {
-    // if the button was in a pressed state, store the release time and update the button state
-    if (buttonState == pressed) {
-      eventTime_ms = millis();
-      buttonState = released;
-    }
-  }
-
-  // if the button is currently in a pressed state...
-  if (buttonState == pressed) {
-    // if the specified hold time has been reached or passed, update the button state and
-    // indicate that a hold event occurred
-    if ((millis() - eventTime_ms) >= holdTime_ms) {
-      buttonState = idle;
-      buttonEvent = hold;
-      return true;
-    }
-  }
-
-  // if the button is currently in a released state...
-  else if (buttonState == released) {
-    // if the specified double tap time has been reached or passed, update the button state
-    // and indicate that a (single) tap event occurred
-    if ((millis() - eventTime_ms) >= doubleTapTime_ms) {
-      buttonState = idle;
-      buttonEvent = tap;
-      return true;
-    }
-  }
-
-  // if we get to this point, indicate that no button event occurred in this cycle
-  buttonEvent = none;
-  return passthruState;
-}
-
-// resets the saved button state to idle
-void ButtonEvents::reset() {
-  buttonState = idle;
-  buttonEvent = none;
-}
-
-// sets the button event timestamp to the current value of millis()
-void ButtonEvents::retime() {
-  eventTime_ms = millis();
+// reads the current state of the encoder and increments/decrements the virtual
+// position value.  Returns true if the encoder is being rotated, false if it is not.
+// The core encoder reading logic in this method is based on Oleg Mazurov's example code
+// posted at https://www.circuitsathome.com/mcu/reading-rotary-encoder-on-arduino/.
+bool RotaryEncoder::update() {
   
-  // prevent double-tap from triggering after a call to retime() - only taps and holds
-  // can be effectivley retimed after a delay
-  if (buttonState == released) {
-    eventTime_ms += doubleTapTime_ms;
-  }  
+  // credit goes to Oleg Mazurov for the next four lines...
+  const char stateTable[] = { 0,-1,1,0,1,0,0,-1,-1,0,0,1,0,1,-1,0 }; // direction lookup table
+  encoderState <<= 2; // shift encoder state over two bits to make room for new data
+  encoderState |= (((digitalRead(channelAPin) << 1) | digitalRead(channelBPin)) & 0x03);  // get current state
+  currentDirection = stateTable[(encoderState & 0x0F)]; //determine current direction
+
+  // if debounce (rate limiter) is active and the debounce time has elapsed, end the debounce
+  if (debouncing && ((millis() - previousMillis_ms) >= debounceTime_ms)) {
+    debouncing = false;
+  }
+
+  // if a change has occurred and we are not currently debouncing
+  if (currentDirection && !debouncing) {
+    debouncing = true; // enable debouncer
+    if (currentDirection == DIRECTION_UP && currentPosition < maxPosition) {
+      currentPosition += currentDirection; //increment virtual position if counting up
+    }
+    else if (currentDirection == DIRECTION_DOWN && currentPosition > minPosition) {
+      currentPosition += currentDirection; //decrement virtual position if counting down
+    }
+    previousMillis_ms = millis(); // store timestamp for last encoder read
+    return true; // indicate that encoder is in motion
+  }
+  else {
+    return false; // indicate that encoder is idle or being debounced
+  }
 }
 
-// returns the last triggered event
-ButtonEvent ButtonEvents::event() {
-  return buttonEvent;
+// returns the direction the encoder was moving on the last update() call
+char RotaryEncoder::direction() {
+  return currentDirection;
 }
 
-// returns true if button was tapped
-bool ButtonEvents::tapped() {
-  return (buttonEvent == tap);
+// returns true if the virtual position increased
+bool RotaryEncoder::increased() {
+  return (currentDirection == DIRECTION_UP);
 }
 
-// returns true if button was double-tapped
-bool ButtonEvents::doubleTapped() {
-  return (buttonEvent == doubleTap);
+// returns true if the virtual position decreased
+bool RotaryEncoder::decreased() {
+  return (currentDirection == DIRECTION_DOWN);
 }
 
-// returns true if button was held
-bool ButtonEvents::held() {
-  return (buttonEvent == hold);
+// sets the minimum virtual position value and updates current position if necessary
+void RotaryEncoder::positionMin(int minValue) {
+  minPosition = minValue;
+  if (currentPosition < minPosition) {
+    currentPosition = minPosition;
+  }
 }
 
-// passthru to Bounce2 read() method
-bool ButtonEvents::read() {
-  return debouncedButton.read();
+// sets the maximum virtual position value and updates current position if necessary
+void RotaryEncoder::positionMax(int maxValue) {
+  maxPosition = maxValue;
+  if (currentPosition > maxValue) {
+    currentPosition = maxValue;
+  }
 }
 
-// passthru to Bounce2 fell() method
-bool ButtonEvents::fell() {
-  return debouncedButton.fell();
+// sets the current virtual position to the specified value if it is in range
+void RotaryEncoder::setPosition(int newPosition) {
+  if ((newPosition >= minPosition) && (newPosition <= maxPosition)) {
+    currentPosition = newPosition;
+  }
 }
 
-// passthru to Bounce2 rose() method
-bool ButtonEvents::rose() {
-  return debouncedButton.rose();
+// returns the current virtual position of the encoder
+int RotaryEncoder::getPosition() {
+  return currentPosition;
+}
+
+// resets the stored encoder start to startup values
+void RotaryEncoder::reset() {
+  encoderState = initialState;
+  debouncing = false;
+  currentDirection = DIRECTION_NONE;
+  currentPosition = minPosition;
+}
+
+// sets the debounce timestamp to the current value of millis()
+void RotaryEncoder::retime() {
+  previousMillis_ms = millis();
 }
